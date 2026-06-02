@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Multiban – Gestão de Frota</title>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;800&family=Barlow:wght@300;400;500;600&display=swap" rel="stylesheet"/>
+
+  <!-- Firebase -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+    import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc, updateDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+    // ============================================================
+    //  CONFIGURAÇÃO FIREBASE
+    //  Substitua pelos dados do seu projeto Firebase
+    // ============================================================
+    const firebaseConfig = {
+      apiKey: "AIzaSyBllIpgVEDQeSYMQuitkXSW6coeRP6MmU4",
+      authDomain: "frota-multiban.firebaseapp.com",
+      projectId: "frota-multiban",
+      storageBucket: "frota-multiban.firebasestorage.app",
+      messagingSenderId: "128926731096",
+      appId: "1:128926731096:web:98343ea1a3d7fb4c7a332d",
+      measurementId: "G-8B5F0K5PVD"
+    };
+    // ============================================================
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+    const col = collection(db, "veiculos");
+
+    // ---- helpers ----
+    function diasParaVencer(dataISO) {
+      const hoje = new Date(); hoje.setHours(0,0,0,0);
+      const alvo = new Date(dataISO + "T00:00:00");
+      return Math.round((alvo - hoje) / 86400000);
+    }
+
+    function statusClass(dias) {
+      if (dias < 0)  return "vencido";
+      if (dias <= 7) return "critico";
+      if (dias <= 30) return "atencao";
+      return "ok";
+    }
+
+    function statusLabel(dias) {
+      if (dias < 0)  return `Vencido há ${Math.abs(dias)}d`;
+      if (dias === 0) return "Vence hoje!";
+      if (dias === 1) return "Vence amanhã";
+      return `${dias} dias`;
+    }
+
+    function fmtDate(iso) {
+      const [y,m,d] = iso.split("-");
+      return `${d}/${m}/${y}`;
+    }
+
+    // ---- state ----
+    let veiculos = [];
+
+    // ---- render dashboard ----
+    function renderDashboard() {
+      const grid = document.getElementById("dash-grid");
+      const totalEl = document.getElementById("stat-total");
+      const vencidoEl = document.getElementById("stat-vencido");
+      const criticoEl = document.getElementById("stat-critico");
+      const okEl = document.getElementById("stat-ok");
+
+      const sorted = [...veiculos].sort((a,b) => diasParaVencer(a.vencimento) - diasParaVencer(b.vencimento));
+
+      let nVencido=0, nCritico=0, nOk=0;
+      sorted.forEach(v => {
+        const d = diasParaVencer(v.vencimento);
+        if (d < 0) nVencido++;
+        else if (d <= 30) nCritico++;
+        else nOk++;
+      });
+
+      totalEl.textContent = veiculos.length;
+      vencidoEl.textContent = nVencido;
+      criticoEl.textContent = nCritico;
+      okEl.textContent = nOk;
+
+      grid.innerHTML = sorted.map(v => {
+        const dias = diasParaVencer(v.vencimento);
+        const sc = statusClass(dias);
+        const sl = statusLabel(dias);
+        return `
+          <div class="card ${sc}">
+            <div class="card-top">
+              <span class="placa">${v.placa}</span>
+              <span class="badge ${sc}">${sl}</span>
+            </div>
+            <div class="card-info">
+              <span class="label">Modelo</span>
+              <span class="value">${v.modelo || "—"}</span>
+            </div>
+            <div class="card-info">
+              <span class="label">Vencimento CRLV</span>
+              <span class="value">${fmtDate(v.vencimento)}</span>
+            </div>
+            ${v.obs ? `<div class="card-obs">${v.obs}</div>` : ""}
+            <div class="card-actions">
+              <button class="btn-del" onclick="window.deleteVeiculo('${v.id}')">🗑 Remover</button>
+            </div>
+          </div>`;
+      }).join("") || `<div class="empty">Nenhum veículo cadastrado ainda.</div>`;
+    }
+
+    // ---- render lista (aba cadastro) ----
+    function renderLista() {
+      const tbody = document.getElementById("lista-body");
+      const sorted = [...veiculos].sort((a,b) => diasParaVencer(a.vencimento) - diasParaVencer(b.vencimento));
+      tbody.innerHTML = sorted.map(v => {
+        const dias = diasParaVencer(v.vencimento);
+        const sc = statusClass(dias);
+        return `<tr>
+          <td><span class="placa-sm">${v.placa}</span></td>
+          <td>${v.modelo || "—"}</td>
+          <td>${fmtDate(v.vencimento)}</td>
+          <td><span class="badge ${sc}">${statusLabel(dias)}</span></td>
+          <td>${v.obs || "—"}</td>
+          <td><button class="btn-del-sm" onclick="window.deleteVeiculo('${v.id}')">✕</button></td>
+        </tr>`;
+      }).join("") || `<tr><td colspan="6" style="text-align:center;opacity:.5;padding:2rem">Nenhum veículo cadastrado.</td></tr>`;
+    }
+
+    // ---- Firestore listener ----
+    onSnapshot(col, (snap) => {
+      veiculos = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      renderDashboard();
+      renderLista();
+    });
+
+    // ---- add veículo ----
+    window.addVeiculo = async function() {
+      const placa    = document.getElementById("f-placa").value.trim().toUpperCase();
+      const modelo   = document.getElementById("f-modelo").value.trim();
+      const venc     = document.getElementById("f-venc").value;
+      const obs      = document.getElementById("f-obs").value.trim();
+      const errEl    = document.getElementById("form-err");
+
+      if (!placa || !venc) { errEl.textContent = "Placa e data de vencimento são obrigatórios."; return; }
+      if (veiculos.find(v => v.placa === placa)) { errEl.textContent = "Placa já cadastrada."; return; }
+
+      errEl.textContent = "";
+      const btn = document.getElementById("btn-add");
+      btn.disabled = true; btn.textContent = "Salvando…";
+
+      try {
+        await addDoc(col, { placa, modelo, vencimento: venc, obs, criadoEm: new Date().toISOString() });
+        document.getElementById("f-placa").value = "";
+        document.getElementById("f-modelo").value = "";
+        document.getElementById("f-venc").value = "";
+        document.getElementById("f-obs").value = "";
+        btn.textContent = "✓ Salvo!";
+        setTimeout(() => { btn.disabled=false; btn.textContent="Adicionar Veículo"; }, 1500);
+      } catch(e) {
+        errEl.textContent = "Erro ao salvar. Verifique a configuração do Firebase.";
+        btn.disabled=false; btn.textContent="Adicionar Veículo";
+      }
+    };
+
+    // ---- delete ----
+    window.deleteVeiculo = async function(id) {
+      if (!confirm("Remover este veículo?")) return;
+      await deleteDoc(doc(db, "veiculos", id));
+    };
+  </script>
+
+  <style>
+    :root {
+      --azul:      #1B5EAB;
+      --azul-esc:  #0F3D72;
+      --azul-claro:#3A80D2;
+      --azul-bg:   #EBF2FB;
+      --branco:    #FFFFFF;
+      --cinza-1:   #F4F7FB;
+      --cinza-2:   #E2EAF4;
+      --cinza-3:   #A8BEDB;
+      --texto:     #112240;
+      --texto-sec: #4A6285;
+      --verde:     #1A8C5A;
+      --verde-bg:  #E6F5EE;
+      --amarelo:   #C47D00;
+      --amarelo-bg:#FFF4DC;
+      --vermelho:  #C0392B;
+      --vermelho-bg:#FDECEA;
+      --radius:    12px;
+      --shadow:    0 2px 16px rgba(27,94,171,.10);
+    }
+
+    * { box-sizing:border-box; margin:0; padding:0; }
+    body {
+      font-family:'Barlow',sans-serif;
+      background: var(--cinza-1);
+      color: var(--texto);
+      min-height:100vh;
+    }
+
+    /* ---- HEADER ---- */
+    header {
+      background: var(--azul-esc);
+      padding: 0 2rem;
+      display:flex; align-items:center; gap:1rem;
+      height:64px;
+      box-shadow: 0 2px 12px rgba(0,0,0,.18);
+    }
+    header img { height:42px; width:42px; object-fit:contain; }
+    header h1 {
+      font-family:'Barlow Condensed',sans-serif;
+      font-weight:800; font-size:1.5rem;
+      color:var(--branco); letter-spacing:.5px;
+      line-height:1;
+    }
+    header h1 span {
+      display:block; font-size:.75rem; font-weight:400;
+      color:var(--cinza-3); letter-spacing:1.5px; text-transform:uppercase;
+    }
+
+    /* ---- TABS ---- */
+    .tabs {
+      background: var(--azul);
+      display:flex; gap:0;
+      padding: 0 2rem;
+    }
+    .tab {
+      padding:.75rem 1.5rem;
+      font-family:'Barlow Condensed',sans-serif;
+      font-size:1rem; font-weight:700;
+      letter-spacing:.5px; text-transform:uppercase;
+      color:rgba(255,255,255,.65);
+      cursor:pointer; border:none; background:none;
+      border-bottom:3px solid transparent;
+      transition: all .2s;
+    }
+    .tab:hover { color:#fff; }
+    .tab.active { color:#fff; border-bottom-color:var(--branco); }
+
+    /* ---- CONTENT ---- */
+    .content { display:none; padding:2rem; max-width:1200px; margin:0 auto; }
+    .content.active { display:block; }
+
+    /* ---- STATS BAR ---- */
+    .stats {
+      display:grid; grid-template-columns:repeat(4,1fr); gap:1rem;
+      margin-bottom:2rem;
+    }
+    .stat-card {
+      background:var(--branco); border-radius:var(--radius);
+      padding:1.25rem 1.5rem; box-shadow:var(--shadow);
+      border-top: 4px solid var(--azul);
+    }
+    .stat-card.s-vencido { border-top-color:var(--vermelho); }
+    .stat-card.s-critico { border-top-color:var(--amarelo); }
+    .stat-card.s-ok { border-top-color:var(--verde); }
+    .stat-num {
+      font-family:'Barlow Condensed',sans-serif;
+      font-size:2.5rem; font-weight:800; line-height:1;
+      color:var(--azul);
+    }
+    .s-vencido .stat-num { color:var(--vermelho); }
+    .s-critico .stat-num { color:var(--amarelo); }
+    .s-ok .stat-num { color:var(--verde); }
+    .stat-label { font-size:.8rem; color:var(--texto-sec); margin-top:.25rem; text-transform:uppercase; letter-spacing:.5px; font-weight:600; }
+
+    /* ---- GRID CARDS ---- */
+    #dash-grid {
+      display:grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px,1fr));
+      gap:1rem;
+    }
+    .card {
+      background:var(--branco); border-radius:var(--radius);
+      padding:1.25rem; box-shadow:var(--shadow);
+      border-left:5px solid var(--azul);
+      transition: transform .15s, box-shadow .15s;
+    }
+    .card:hover { transform:translateY(-2px); box-shadow:0 6px 24px rgba(27,94,171,.15); }
+    .card.vencido  { border-left-color:var(--vermelho); background:#fffafa; }
+    .card.critico  { border-left-color:var(--amarelo);  background:#fffdf5; }
+    .card.atencao  { border-left-color:#E0A020;  background:#fffdf5; }
+    .card.ok       { border-left-color:var(--verde); }
+    .card-top { display:flex; justify-content:space-between; align-items:center; margin-bottom:.75rem; }
+    .placa {
+      font-family:'Barlow Condensed',sans-serif;
+      font-size:1.4rem; font-weight:800; letter-spacing:1px;
+      color:var(--azul-esc);
+    }
+    .card-info { display:flex; justify-content:space-between; padding:.3rem 0; border-bottom:1px solid var(--cinza-2); }
+    .card-info:last-of-type { border-bottom:none; }
+    .label { font-size:.75rem; color:var(--texto-sec); text-transform:uppercase; letter-spacing:.3px; font-weight:600; }
+    .value { font-size:.85rem; font-weight:600; color:var(--texto); }
+    .card-obs { font-size:.78rem; color:var(--texto-sec); margin-top:.5rem; font-style:italic; }
+    .card-actions { margin-top:.75rem; text-align:right; }
+    .btn-del { background:none; border:1px solid #ddd; color:var(--vermelho); font-size:.75rem; padding:.25rem .6rem; border-radius:6px; cursor:pointer; transition:.15s; }
+    .btn-del:hover { background:var(--vermelho-bg); border-color:var(--vermelho); }
+
+    /* ---- BADGES ---- */
+    .badge {
+      font-size:.7rem; font-weight:700; padding:.2rem .6rem;
+      border-radius:20px; text-transform:uppercase; letter-spacing:.3px;
+      white-space:nowrap;
+    }
+    .badge.vencido  { background:var(--vermelho-bg); color:var(--vermelho); }
+    .badge.critico  { background:var(--amarelo-bg);  color:var(--amarelo); }
+    .badge.atencao  { background:var(--amarelo-bg);  color:#9a6000; }
+    .badge.ok       { background:var(--verde-bg);    color:var(--verde); }
+
+    /* ---- SECAO TITULO ---- */
+    .section-title {
+      font-family:'Barlow Condensed',sans-serif;
+      font-size:1.1rem; font-weight:700; letter-spacing:.5px;
+      text-transform:uppercase; color:var(--texto-sec);
+      margin-bottom:1rem; display:flex; align-items:center; gap:.5rem;
+    }
+    .section-title::after {
+      content:''; flex:1; height:1px; background:var(--cinza-2);
+    }
+
+    /* ---- FORM ---- */
+    .form-card {
+      background:var(--branco); border-radius:var(--radius);
+      padding:1.75rem 2rem; box-shadow:var(--shadow);
+      margin-bottom:2rem;
+    }
+    .form-grid { display:grid; grid-template-columns:1fr 1fr 1fr 1.5fr; gap:1rem; }
+    .form-group { display:flex; flex-direction:column; gap:.4rem; }
+    .form-group label { font-size:.78rem; font-weight:700; color:var(--texto-sec); text-transform:uppercase; letter-spacing:.3px; }
+    .form-group input, .form-group textarea {
+      border:1.5px solid var(--cinza-2); border-radius:8px;
+      padding:.6rem .9rem; font-size:.9rem; font-family:'Barlow',sans-serif;
+      color:var(--texto); background:var(--cinza-1);
+      transition:.15s;
+    }
+    .form-group input:focus, .form-group textarea:focus {
+      outline:none; border-color:var(--azul); background:#fff;
+      box-shadow:0 0 0 3px rgba(27,94,171,.12);
+    }
+    .form-footer { display:flex; align-items:center; gap:1rem; margin-top:1.25rem; }
+    .btn-primary {
+      background:var(--azul); color:#fff;
+      border:none; border-radius:8px; padding:.7rem 1.8rem;
+      font-family:'Barlow Condensed',sans-serif; font-size:1rem; font-weight:700;
+      letter-spacing:.5px; text-transform:uppercase;
+      cursor:pointer; transition:.15s;
+    }
+    .btn-primary:hover { background:var(--azul-esc); }
+    .btn-primary:disabled { opacity:.6; cursor:not-allowed; }
+    .form-err { font-size:.82rem; color:var(--vermelho); }
+
+    /* ---- TABLE ---- */
+    .table-wrap { background:var(--branco); border-radius:var(--radius); box-shadow:var(--shadow); overflow:hidden; }
+    table { width:100%; border-collapse:collapse; font-size:.88rem; }
+    thead tr { background:var(--azul); color:#fff; }
+    thead th { padding:.75rem 1rem; text-align:left; font-family:'Barlow Condensed',sans-serif; font-size:.85rem; letter-spacing:.5px; text-transform:uppercase; font-weight:700; }
+    tbody tr { border-bottom:1px solid var(--cinza-2); transition:.12s; }
+    tbody tr:hover { background:var(--azul-bg); }
+    tbody td { padding:.7rem 1rem; }
+    .placa-sm { font-family:'Barlow Condensed',sans-serif; font-size:1rem; font-weight:800; color:var(--azul-esc); letter-spacing:1px; }
+    .btn-del-sm { background:none; border:none; color:var(--vermelho); font-size:1rem; cursor:pointer; padding:.2rem .4rem; border-radius:4px; transition:.12s; }
+    .btn-del-sm:hover { background:var(--vermelho-bg); }
+
+    .empty { grid-column:1/-1; text-align:center; padding:3rem; color:var(--texto-sec); font-size:1rem; }
+
+    /* ---- LEGENDA ---- */
+    .legenda { display:flex; gap:1.5rem; margin-bottom:1.5rem; flex-wrap:wrap; }
+    .leg-item { display:flex; align-items:center; gap:.4rem; font-size:.78rem; color:var(--texto-sec); font-weight:600; }
+    .leg-dot { width:10px; height:10px; border-radius:50%; }
+    .leg-dot.vencido { background:var(--vermelho); }
+    .leg-dot.critico { background:var(--amarelo); }
+    .leg-dot.ok { background:var(--verde); }
+    .leg-dot.azul { background:var(--azul); }
+
+    /* ---- RESPONSIVE ---- */
+    @media(max-width:768px){
+      .stats { grid-template-columns:repeat(2,1fr); }
+      .form-grid { grid-template-columns:1fr 1fr; }
+      .content { padding:1rem; }
+      .tabs { padding:0 1rem; }
+    }
+    @media(max-width:480px){
+      .form-grid { grid-template-columns:1fr; }
+      .stats { grid-template-columns:1fr 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  
+  <h1>Multiban<span>Gestão de Frota</span></h1>
+</header>
+
+<div class="tabs">
+  <button class="tab active" onclick="switchTab('dashboard')">📊 Dashboard</button>
+  <button class="tab" onclick="switchTab('cadastro')">➕ Cadastrar Veículo</button>
+</div>
+
+<!-- DASHBOARD -->
+<div id="tab-dashboard" class="content active">
+  <div class="stats">
+    <div class="stat-card">
+      <div class="stat-num" id="stat-total">—</div>
+      <div class="stat-label">Total de veículos</div>
+    </div>
+    <div class="stat-card s-vencido">
+      <div class="stat-num" id="stat-vencido">—</div>
+      <div class="stat-label">Vencidos</div>
+    </div>
+    <div class="stat-card s-critico">
+      <div class="stat-num" id="stat-critico">—</div>
+      <div class="stat-label">Vencem em ≤ 30 dias</div>
+    </div>
+    <div class="stat-card s-ok">
+      <div class="stat-num" id="stat-ok">—</div>
+      <div class="stat-label">Em dia</div>
+    </div>
+  </div>
+
+  <div class="legenda">
+    <div class="leg-item"><div class="leg-dot vencido"></div> Vencido</div>
+    <div class="leg-item"><div class="leg-dot critico"></div> Vence em até 7 dias</div>
+    <div class="leg-dot" style="width:10px;height:10px;border-radius:50%;background:#E0A020;display:inline-block"></div>
+    <span style="font-size:.78px;color:var(--texto-sec);font-weight:600;margin-left:.4rem"> Vence em até 30 dias</span>
+    <div class="leg-item"><div class="leg-dot ok"></div> Em dia (+30 dias)</div>
+  </div>
+
+  <div class="section-title">Veículos ordenados por urgência</div>
+  <div id="dash-grid"></div>
+</div>
+
+<!-- CADASTRO -->
+<div id="tab-cadastro" class="content">
+
+  <div class="form-card">
+    <div class="section-title">Adicionar veículo</div>
+    <div class="form-grid">
+      <div class="form-group">
+        <label>Placa *</label>
+        <input id="f-placa" type="text" placeholder="SXF0E63" maxlength="8"/>
+      </div>
+      <div class="form-group">
+        <label>Modelo</label>
+        <input id="f-modelo" type="text" placeholder="VW Delivery 11.180"/>
+      </div>
+      <div class="form-group">
+        <label>Vencimento CRLV *</label>
+        <input id="f-venc" type="date"/>
+      </div>
+      <div class="form-group">
+        <label>Observações</label>
+        <input id="f-obs" type="text" placeholder="Ex: Alienação fiduciária"/>
+      </div>
+    </div>
+    <div class="form-footer">
+      <button id="btn-add" class="btn-primary" onclick="window.addVeiculo()">Adicionar Veículo</button>
+      <span id="form-err" class="form-err"></span>
+    </div>
+  </div>
+
+  <div class="section-title">Veículos cadastrados</div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Placa</th>
+          <th>Modelo</th>
+          <th>Vencimento</th>
+          <th>Status</th>
+          <th>Observações</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="lista-body"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+  function switchTab(name) {
+    document.querySelectorAll('.tab').forEach((t,i) => t.classList.remove('active'));
+    document.querySelectorAll('.content').forEach(c => c.classList.remove('active'));
+    const idx = name === 'dashboard' ? 0 : 1;
+    document.querySelectorAll('.tab')[idx].classList.add('active');
+    document.getElementById('tab-' + name).classList.add('active');
+  }
+</script>
+</body>
+</html>
