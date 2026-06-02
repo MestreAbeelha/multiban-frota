@@ -1,3 +1,4 @@
+
 import { initializeApp } from "firebase/app";
 import { getFirestore, collection, getDocs } from "firebase/firestore";
 
@@ -93,45 +94,22 @@ async function main() {
   const snap = await getDocs(collection(db, "veiculos"));
   const veiculos = snap.docs.map(d => ({ id: d.id, ...d.data() }));
 
-  const vencendoHoje = veiculos.filter(v => diasParaVencer(v.vencimento) === 0);
-  const vencidos     = veiculos.filter(v => diasParaVencer(v.vencimento) < 0);
-  const em30dias     = veiculos.filter(v => diasParaVencer(v.vencimento) === 30);
+  const vencidos = veiculos.filter(v => diasParaVencer(v.vencimento) <= 0);
 
-  let enviados = 0;
-
-  if (vencidos.length > 0 || vencendoHoje.length > 0) {
-    const lista = [...vencendoHoje, ...vencidos];
+  if (vencidos.length > 0) {
     await enviarEmail(
       destinatario,
-      `🚨 CRLV Vencido — ${lista.length} veículo(s)`,
+      `🚨 CRLV Vencido — ${vencidos.length} veículo(s)`,
       gerarHtml(
         "⚠️ CRLV Vencido",
-        lista,
+        vencidos,
         { bg: "#FDECEA", borda: "#C0392B", texto: "#C0392B" },
-        `${lista.length} veículo(s) com CRLV vencido ou vencendo hoje. Regularize o quanto antes.`
+        `${vencidos.length} veículo(s) com CRLV vencido. Regularize o quanto antes.`
       )
     );
     console.log(`✅ Email de vencidos enviado para ${destinatario}`);
-    enviados++;
-  }
-
-  if (em30dias.length > 0) {
-    await enviarEmail(
-      destinatario,
-      `⏰ CRLV vence em 30 dias — ${em30dias.length} veículo(s)`,
-      gerarHtml(
-        "⏰ Vencimento em 30 dias",
-        em30dias,
-        { bg: "#FFF4DC", borda: "#C47D00", texto: "#C47D00" },
-        `${em30dias.length} veículo(s) com CRLV vencendo em exatamente 30 dias. Providencie a renovação.`
-      )
-    );
-    console.log(`✅ Email de alerta 30 dias enviado para ${destinatario}`);
-    enviados++;
-  }
-
-  if (enviados === 0) {
-    console.log("✅ Nenhum alerta necessário hoje.");
+  } else {
+    console.log("✅ Nenhuma placa vencida hoje.");
   }
 }
 
