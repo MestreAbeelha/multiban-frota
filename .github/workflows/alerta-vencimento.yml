@@ -1,0 +1,29 @@
+name: Alerta Vencimento CRLV
+
+on:
+  schedule:
+    # Roda todo dia às 8h horário de Brasília (11:00 UTC)
+    - cron: "0 11 * * *"
+  workflow_dispatch: # permite rodar manualmente pelo GitHub para testar
+
+jobs:
+  alerta:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repositório
+        uses: actions/checkout@v4
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Instalar dependências
+        run: npm install firebase resend node-fetch
+
+      - name: Rodar script de alertas
+        env:
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          EMAIL_DESTINO: ${{ secrets.EMAIL_DESTINO }}
+        run: node --experimental-vm-modules scripts/alerta-vencimento.js
