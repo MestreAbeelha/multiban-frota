@@ -213,7 +213,7 @@
       btn.disabled = true; btn.textContent = "Salvando…";
       try {
         await updateDoc(doc(db, "veiculos", id), { vencimento: venc, obs });
-        closeEdit();
+        window.closeEdit();
       } catch(e) {
         errEl.textContent = "Erro ao salvar.";
       }
@@ -436,6 +436,57 @@
     .leg-dot.ok { background:var(--verde); }
     .leg-dot.azul { background:var(--azul); }
 
+    /* ---- LOGIN ---- */
+    #login-overlay {
+      position:fixed; inset:0; z-index:9999;
+      background: linear-gradient(135deg, var(--azul-esc) 0%, var(--azul) 100%);
+      display:flex; align-items:center; justify-content:center;
+    }
+    #login-overlay.hidden { display:none; }
+    .login-box {
+      background:#fff; border-radius:18px;
+      padding:2.5rem 2.25rem; width:100%; max-width:380px;
+      box-shadow:0 12px 48px rgba(0,0,0,.3);
+      text-align:center;
+    }
+    .login-logo {
+      font-family:'Barlow Condensed',sans-serif;
+      font-size:2rem; font-weight:800; color:var(--azul-esc);
+      letter-spacing:.5px; line-height:1; margin-bottom:.25rem;
+    }
+    .login-logo span {
+      display:block; font-size:.75rem; font-weight:400;
+      color:var(--texto-sec); letter-spacing:1.5px; text-transform:uppercase;
+      margin-bottom:1.75rem;
+    }
+    .login-field {
+      width:100%; border:1.5px solid var(--cinza-2); border-radius:8px;
+      padding:.75rem 1rem; font-size:.95rem; font-family:'Barlow',sans-serif;
+      color:var(--texto); background:var(--cinza-1);
+      margin-bottom:.85rem; transition:.15s; display:block;
+    }
+    .login-field:focus {
+      outline:none; border-color:var(--azul);
+      background:#fff; box-shadow:0 0 0 3px rgba(27,94,171,.12);
+    }
+    .login-btn {
+      width:100%; background:var(--azul); color:#fff;
+      border:none; border-radius:8px; padding:.85rem;
+      font-family:'Barlow Condensed',sans-serif; font-size:1.1rem; font-weight:700;
+      letter-spacing:.5px; text-transform:uppercase;
+      cursor:pointer; transition:.15s; margin-top:.25rem;
+    }
+    .login-btn:hover { background:var(--azul-esc); }
+    .login-err { font-size:.82rem; color:var(--vermelho); margin-top:.75rem; min-height:1.2em; }
+    .logout-btn {
+      background:none; border:1px solid rgba(255,255,255,.35);
+      color:rgba(255,255,255,.8); border-radius:6px;
+      padding:.35rem .85rem; font-family:'Barlow Condensed',sans-serif;
+      font-size:.85rem; font-weight:700; letter-spacing:.3px;
+      cursor:pointer; transition:.15s; margin-left:auto;
+    }
+    .logout-btn:hover { background:rgba(255,255,255,.15); color:#fff; }
+
     /* ---- RESPONSIVE ---- */
     @media(max-width:768px){
       .stats { grid-template-columns:repeat(2,1fr); }
@@ -451,9 +502,21 @@
 </head>
 <body>
 
+<!-- LOGIN OVERLAY -->
+<div id="login-overlay">
+  <div class="login-box">
+    <div class="login-logo">Multiban<span>Gestão de Frota</span></div>
+    <input id="login-user" class="login-field" type="text" placeholder="Usuário" autocomplete="username"/>
+    <input id="login-pass" class="login-field" type="password" placeholder="Senha" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()"/>
+    <button class="login-btn" onclick="doLogin()">Entrar</button>
+    <div id="login-err" class="login-err"></div>
+  </div>
+</div>
+
 <header>
   
   <h1>Multiban<span>Gestão de Frota</span></h1>
+  <button class="logout-btn" onclick="doLogout()">Sair</button>
 </header>
 
 <div class="tabs">
@@ -563,6 +626,43 @@
 </div>
 
 <script>
+  // ======================================================
+  //  CREDENCIAIS DE ACESSO — altere aqui se necessário
+  // ======================================================
+  const USUARIOS = [
+    { user: "admin",    senha: "multiban2025" },
+    { user: "motorista", senha: "frota123" }
+  ];
+  // ======================================================
+
+  const overlay = document.getElementById("login-overlay");
+
+  function doLogin() {
+    const u = document.getElementById("login-user").value.trim();
+    const p = document.getElementById("login-pass").value;
+    const ok = USUARIOS.find(x => x.user === u && x.senha === p);
+    if (ok) {
+      overlay.classList.add("hidden");
+      sessionStorage.setItem("frota-auth", u);
+    } else {
+      document.getElementById("login-err").textContent = "Usuário ou senha incorretos.";
+      document.getElementById("login-pass").value = "";
+    }
+  }
+
+  function doLogout() {
+    sessionStorage.removeItem("frota-auth");
+    overlay.classList.remove("hidden");
+    document.getElementById("login-user").value = "";
+    document.getElementById("login-pass").value = "";
+    document.getElementById("login-err").textContent = "";
+  }
+
+  // Verifica se já está autenticado na sessão
+  if (sessionStorage.getItem("frota-auth")) {
+    overlay.classList.add("hidden");
+  }
+
   function switchTab(name) {
     document.querySelectorAll('.tab').forEach((t,i) => t.classList.remove('active'));
     document.querySelectorAll('.content').forEach(c => c.classList.remove('active'));
