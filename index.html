@@ -121,8 +121,8 @@
             </div>
             ${v.obs ? `<div class="card-obs">${v.obs}</div>` : ""}
             <div class="card-actions">
-              <button class="btn-edit" onclick="window.openEdit('${v.id}','${v.vencimento}',${JSON.stringify(v.obs||'')})">✏ Renovar</button>
-              <button class="btn-del" onclick="window.deleteVeiculo('${v.id}')">🗑 Remover</button>
+              <button class="btn-edit" data-action="edit" data-id="${v.id}">✏ Renovar</button>
+              <button class="btn-del" data-action="del" data-id="${v.id}">🗑 Remover</button>
             </div>
           </div>`;
       }).join("") || `<div class="empty">Nenhum veículo cadastrado ainda.</div>`;
@@ -142,8 +142,8 @@
           <td><span class="badge ${sc}">${statusLabel(dias)}</span></td>
           <td>${v.obs || "—"}</td>
           <td>
-            <button class="btn-edit-sm" onclick="window.openEdit('${v.id}','${v.vencimento}',${JSON.stringify(v.obs||'')})">✏</button>
-            <button class="btn-del-sm" onclick="window.deleteVeiculo('${v.id}')">✕</button>
+            <button class="btn-edit-sm" data-action="edit" data-id="${v.id}">✏</button>
+            <button class="btn-del-sm" data-action="del" data-id="${v.id}">✕</button>
           </td>
         </tr>`;
       }).join("") || `<tr><td colspan="6" style="text-align:center;opacity:.5;padding:2rem">Nenhum veículo cadastrado.</td></tr>`;
@@ -154,6 +154,16 @@
       veiculos = snap.docs.map(d => ({ id: d.id, ...d.data() }));
       renderDashboard();
       renderLista();
+    });
+
+    // ---- delegação de eventos para botões Renovar/Remover ----
+    document.addEventListener("click", function(e) {
+      const btn = e.target.closest("[data-action]");
+      if (!btn) return;
+      const id = btn.getAttribute("data-id");
+      const action = btn.getAttribute("data-action");
+      if (action === "edit") window.openEdit(id);
+      else if (action === "del") window.deleteVeiculo(id);
     });
 
     // ---- add veículo ----
@@ -187,11 +197,13 @@
     };
 
     // ---- edit ----
-    window.openEdit = function(id, vencISO, obs) {
+    window.openEdit = function(id) {
+      const v = veiculos.find(x => x.id === id);
+      if (!v) return;
       document.getElementById("edit-id").value = id;
-      const [y,m,d] = vencISO.split("-");
+      const [y,m,d] = v.vencimento.split("-");
       document.getElementById("edit-venc").value = `${d}/${m}/${y}`;
-      document.getElementById("edit-obs").value = obs;
+      document.getElementById("edit-obs").value = v.obs || "";
       document.getElementById("edit-err").textContent = "";
       document.getElementById("edit-modal").style.display = "flex";
     };
